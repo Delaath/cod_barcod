@@ -8,11 +8,9 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const OPENAI_KEY = process.env.OPENAI_KEY;
 
 const bot = new Telegraf(BOT_TOKEN);
-const openai = new OpenAI({
-  apiKey: OPENAI_KEY,
-});
+const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
-// ====== ХРАНЕНИЕ ПРОФИЛЕЙ ======
+// ====== ХРАНЕНИЕ ======
 const DATA_FILE = path.join(__dirname, "users.json");
 let users = {};
 
@@ -23,391 +21,284 @@ if (fs.existsSync(DATA_FILE)) {
     users = {};
   }
 }
+
 function saveUsers() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2), "utf8");
 }
 
-// ====== СЛУЧАЙНЫЕ "ДУМАЮ" ======
-const THINKING = {
-  ru: [
-    "Думаю 🤔",
-    "Ща, секунду…",
-    "Погодь, соображаю…",
-    "Так-так…",
-    "Сек, считаю в уме…",
-  ],
-  en: [
-    "Thinking 🤔",
-    "Hold on…",
-    "Let me think…",
-    "One sec…",
-    "Working on it…",
-  ],
-};
-function randomThinking(lang) {
-  const arr = THINKING[lang] || THINKING.en;
-  return arr[Math.floor(Math.random() * arr.length)];
+function getUser(id) {
+  if (!users[id]) {
+    users[id] = {
+      mode: "debug",
+      dailyCount: 0,
+      lastDay: new Date().toDateString(),
+      subUntil: 0,
+      roastCredits: 0,
+      hardCredits: 0,
+      taskLevel: null,
+      taskLang: null,
+    };
+  }
+  // сброс дневного лимита
+  const today = new Date().toDateString();
+  if (users[id].lastDay !== today) {
+    users[id].lastDay = today;
+    users[id].dailyCount = 0;
+  }
+  return users[id];
 }
 
-// ====== ТЕКСТ ИНТРО ======
-const INTRO = {
-  ru: `🤖 CodBarBod — твой злобный (и полезный) AI для кода 😈
+// ====== ЛИМИТЫ ======
+const FREE_DAILY_LIMIT = 20;
+const SUB_DAILY_LIMIT = 200;
 
-🛠 Дебаг — чиним ошибки и разбираем код  
-👨‍🏫 Учитель — спокойно объясняю как новичку  
-🧪 Задания — даю задачи: лёгкие, средние, сложные  
-🚬 Философ — короткие размышления о жизни программиста  
-😈 Разнеси мой код — оценка, комментарии и совет  
-📂 Файлы — пришли .js / .py / .txt, я разберу  
-
-Выбирай режим и погнали 👇`,
-
-  en: `🤖 CodBarBod — your evil (but useful) AI for coding 😈
-
-🛠 Debug — fix bugs and analyze code  
-👨‍🏫 Teacher — explain calmly for beginners  
-🧪 Tasks — get easy, medium, hard tasks  
-🚬 Philosopher — short dev-life thoughts  
-😈 Roast my code — score, comments and advice  
-📂 Files — send .js / .py / .txt, I’ll analyze  
-
-Choose a mode and let’s go 👇`,
+// ====== МАГАЗИН ======
+const SHOP_ITEMS = {
+  sub: { title: "Подписка на 30 дней", price: 20 },
+  roast: { title: "Разнос кода (15 использований)", price: 5 },
+  hard: { title: "Hard задания (15 использований)", price: 5 },
 };
 
-const ENTER_MESSAGES = {
-  ru: {
-    debug: [
-      "Ну, показывай код, где болит? 😈",
-      "Окей, что сломалось на этот раз?",
-      "Кидай ошибку, разберём по косточкам.",
-      "Давай, удиви меня своим багом.",
-    ],
-    teacher: [
-      "Что ты хочешь понять? Объясню спокойно 🙂",
-      "С чего начнём обучение?",
-      "Что сейчас непонятно?",
-      "Давай разберём тему шаг за шагом.",
-    ],
-    philosopher: [
-      "Ну что, как жизнь у программиста? 🚬",
-      "Код или жизнь — что сегодня болит?",
-      "О чём хочешь пофилософствовать?",
-      "Иногда баги — это отражение души. Поговорим?",
-    ],
-  },
-  en: {
-    debug: [
-      "Alright, show me where it hurts 😈",
-      "So, what did you break this time?",
-      "Drop the error, let's dissect it.",
-      "Come on, surprise me with your bug.",
-    ],
-    teacher: [
-      "What do you want to learn? I'll explain calmly 🙂",
-      "Where should we start?",
-      "What’s confusing you right now?",
-      "Let’s go step by step.",
-    ],
-    philosopher: [
-      "So… how’s the life of a developer? 🚬",
-      "Code or life — what hurts today?",
-      "What do you want to reflect about?",
-      "Sometimes bugs are just mirrors of the soul. Let’s talk.",
-    ],
-  },
-};
-
-function randomFrom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+// ====== THINKING ======
+const THINKING = ["Думаю 🤔", "Ща, секунду…", "Так-так…", "Сек, считаю в уме…"];
+function randomThinking() {
+  return THINKING[Math.floor(Math.random() * THINKING.length)];
 }
 
 // ====== ПРОМПТЫ ======
 const PROMPTS = {
-  ru: {
-    debug: `Ты — злой, остроумный программист-наставник. Ирония допустима, но по делу. В конце задай 1 вопрос.`,
-    teacher: `Ты — спокойный и терпеливый учитель. Без мата. Объясняй как новичку. В конце задай вопрос для проверки понимания.`,
-    philosopher: `Ты — программист-философ. Отвечай КОРОТКО, 1–2 предложения. В конце задай 1 вопрос.`,
-    roast: `Ты — строгий код-ревьюер. Дай оценку 1–10, 1–2 коротких комментария и 1 конкретный совет.`,
-    tasks: {
-      easy: `Сгенерируй ЛЁГКОЕ задание по программированию (JS или Python). Дай полное описание и требования.`,
-      medium: `Сгенерируй СРЕДНЕЕ задание по программированию (JS или Python). Дай полное описание и требования.`,
-      hard: `Сгенерируй СЛОЖНОЕ задание по программированию (JS или Python). Дай полное описание и требования.`,
-    },
-  },
-  en: {
-    debug: `You are a witty, sarcastic programming mentor. Ask 1 question at the end.`,
-    teacher: `You are a calm and patient teacher. Explain for a beginner. Ask a question at the end.`,
-    philosopher: `You are a programmer-philosopher. Reply SHORT, 1–2 sentences. Ask 1 question.`,
-    roast: `You are a strict code reviewer. Give score 1–10, 1–2 comments and 1 advice.`,
-    tasks: {
-      easy: `Generate an EASY programming task (JS or Python). Give full description and requirements.`,
-      medium: `Generate a MEDIUM programming task (JS or Python). Give full description and requirements.`,
-      hard: `Generate a HARD programming task (JS or Python). Give full description and requirements.`,
-    },
+  debug: "Ты — злой, остроумный программист-наставник. Ирония допустима, но по делу. В конце задай 1 вопрос.",
+  teacher: "Ты — спокойный и терпеливый учитель. Объясняй как новичку. В конце задай 1 вопрос.",
+  philosopher: "Ты — программист-философ. Отвечай КОРОТКО, 1–2 предложения. В конце задай 1 вопрос.",
+  roast: "Ты — строгий код-ревьюер. Дай оценку 1–10, 1–2 коротких комментария и 1 конкретный совет.",
+  tasks: {
+    easy: "Сгенерируй ЛЁГКОЕ задание по программированию на языке: {lang}. Дай полное описание и требования.",
+    medium: "Сгенерируй СРЕДНЕЕ задание по программированию на языке: {lang}. Дай полное описание и требования.",
+    hard: "Сгенерируй СЛОЖНОЕ задание по программированию на языке: {lang}. Дай полное описание и требования.",
   },
 };
 
-// ====== ВСПОМОГАТЕЛЬНОЕ ======
-function splitText(text, chunkSize = 3500) {
-  const chunks = [];
-  let start = 0;
-  while (start < text.length) {
-    chunks.push(text.slice(start, start + chunkSize));
-    start += chunkSize;
-  }
-  return chunks;
-}
-
-function escapeHtml(text) {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-async function sendFormatted(ctx, text) {
-  if (text.includes("```")) {
-    const cleaned = text.replace(/```[\s\S]*?```/g, (block) => {
-      const code = block.replace(/```[a-zA-Z]*\n?/, "").replace(/```$/, "");
-      return `<pre><code>${escapeHtml(code)}</code></pre>`;
-    });
-    await ctx.reply(cleaned, { parse_mode: "HTML" });
-  } else {
-    await ctx.reply(text);
-  }
-}
-
 // ====== МЕНЮ ======
-function mainMenu(lang) {
-  if (lang === "ru") {
-    return Markup.keyboard([
-      ["🛠 Дебаг", "👨‍🏫 Учитель"],
-      ["🧪 Задания", "🚬 Философ"],
-      ["🌍 Сменить язык"],
-    ]).resize();
-  } else {
-    return Markup.keyboard([
-      ["🛠 Debug", "👨‍🏫 Teacher"],
-      ["🧪 Tasks", "🚬 Philosophy"],
-      ["🌍 Change language"],
-    ]).resize();
-  }
+function mainMenu() {
+  return Markup.keyboard([
+    ["🛠 Дебаг", "👨‍🏫 Учитель"],
+    ["🧪 Задания", "🚬 Философ"],
+    ["😈 Разнос кода", "🛒 Магазин"],
+  ]).resize();
 }
 
-function tasksMenu(lang) {
-  if (lang === "ru") {
-    return Markup.keyboard([
-      ["🟢 Легко", "🟡 Средне", "🔴 Сложно"],
-      ["⬅️ Назад"],
-    ]).resize();
-  } else {
-    return Markup.keyboard([
-      ["🟢 Easy", "🟡 Medium", "🔴 Hard"],
-      ["⬅️ Back"],
-    ]).resize();
-  }
+function tasksMenu() {
+  return Markup.keyboard([
+    ["🟢 Легко", "🟡 Средне", "🔴 Сложно"],
+    ["⬅️ Назад"],
+  ]).resize();
+}
+
+function langsMenu() {
+  return Markup.keyboard([
+    ["JS", "Python", "Java"],
+    ["C", "C++", "C#"],
+    ["⬅️ Назад"],
+  ]).resize();
 }
 
 // ====== START ======
 bot.start((ctx) => {
+  getUser(ctx.from.id);
+  ctx.reply("Выбирай режим 👇", mainMenu());
+});
+
+// ====== МАГАЗИН ======
+bot.hears("🛒 Магазин", (ctx) => {
   ctx.reply(
-    "Выбери язык / Choose language",
-    Markup.keyboard([["🇷🇺 Русский", "🇬🇧 English"]]).resize(),
+    "🛒 Магазин:\n\n" +
+      "⭐ Подписка 30 дней — 20⭐ (200 запросов/день)\n" +
+      "😈 Разнос кода (15) — 5⭐\n" +
+      "🔴 Hard задания (15) — 5⭐\n\n" +
+      "Для покупки напиши:\n" +
+      "buy sub\n" +
+      "buy roast\n" +
+      "buy hard"
   );
 });
 
-// ====== СМЕНА ЯЗЫКА ======
-bot.hears(/Сменить язык|Change language/, (ctx) => {
-  ctx.reply(
-    "Выбери язык / Choose language",
-    Markup.keyboard([["🇷🇺 Русский", "🇬🇧 English"]]).resize(),
-  );
+bot.hears(/^buy (sub|roast|hard)$/i, async (ctx) => {
+  const key = ctx.match[1];
+  const item = SHOP_ITEMS[key];
+
+  await ctx.replyWithInvoice({
+    title: item.title,
+    description: item.title,
+    payload: key,
+    provider_token: "", // для Telegram Stars оставляем пустым
+    currency: "XTR",
+    prices: [{ label: item.title, amount: item.price }],
+  });
 });
 
-// ====== ВЫБОР ЯЗЫКА ======
-bot.hears("🇷🇺 Русский", (ctx) => {
-  users[ctx.from.id] = { lang: "ru", mode: "debug", history: [] };
+// ====== ПРЕЧЕК ======
+bot.on("pre_checkout_query", (ctx) => ctx.answerPreCheckoutQuery(true));
+
+// ====== УСПЕШНАЯ ОПЛАТА ======
+bot.on("successful_payment", (ctx) => {
+  const user = getUser(ctx.from.id);
+  const payload = ctx.message.successful_payment.invoice_payload;
+
+  if (payload === "sub") {
+    user.subUntil = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    ctx.reply("✅ Подписка активна на 30 дней!");
+  }
+  if (payload === "roast") {
+    user.roastCredits += 15;
+    ctx.reply("✅ Куплено 15 использований 'Разнос кода'!");
+  }
+  if (payload === "hard") {
+    user.hardCredits += 15;
+    ctx.reply("✅ Куплено 15 Hard-заданий!");
+  }
+
   saveUsers();
-  ctx.reply(INTRO.ru);
-  ctx.reply("Выбирай режим:", mainMenu("ru"));
-});
-
-bot.hears("🇬🇧 English", (ctx) => {
-  users[ctx.from.id] = { lang: "en", mode: "debug", history: [] };
-  saveUsers();
-  ctx.reply(INTRO.en);
-  ctx.reply("Choose mode:", mainMenu("en"));
-});
-
-// ====== НАЗАД (ПЕРЕХВАТ ДО text) ======
-bot.hears("⬅️ Назад", (ctx) => {
-  const user = users[ctx.from.id];
-  if (!user) return;
-  ctx.reply(
-    user.lang === "ru" ? "Главное меню:" : "Main menu:",
-    mainMenu(user.lang),
-  );
-});
-bot.hears("⬅️ Back", (ctx) => {
-  const user = users[ctx.from.id];
-  if (!user) return;
-  ctx.reply(
-    user.lang === "ru" ? "Главное меню:" : "Main menu:",
-    mainMenu(user.lang),
-  );
 });
 
 // ====== РЕЖИМЫ ======
-bot.hears(/Дебаг|Debug/, (ctx) => {
-  const user = users[ctx.from.id];
-  if (!user) return;
-  user.mode = "debug";
+bot.hears("🛠 Дебаг", (ctx) => {
+  const u = getUser(ctx.from.id);
+  u.mode = "debug";
   saveUsers();
-
-  const msg = randomFrom(ENTER_MESSAGES[user.lang].debug);
-  ctx.reply(msg);
+  ctx.reply("Кидай код или ошибку 😈");
 });
 
-bot.hears(/Учитель|Teacher/, (ctx) => {
-  const user = users[ctx.from.id];
-  if (!user) return;
-  user.mode = "teacher";
+bot.hears("👨‍🏫 Учитель", (ctx) => {
+  const u = getUser(ctx.from.id);
+  u.mode = "teacher";
   saveUsers();
-
-  const msg = randomFrom(ENTER_MESSAGES[user.lang].teacher);
-  ctx.reply(msg);
+  ctx.reply("Что объяснить?");
 });
 
-bot.hears(/Философ|Philosophy/, (ctx) => {
-  const user = users[ctx.from.id];
-  if (!user) return;
-  user.mode = "philosopher";
+bot.hears("🚬 Философ", (ctx) => {
+  const u = getUser(ctx.from.id);
+  u.mode = "philosopher";
   saveUsers();
-
-  const msg = randomFrom(ENTER_MESSAGES[user.lang].philosopher);
-  ctx.reply(msg);
+  ctx.reply("О чём поговорим?");
 });
 
-bot.hears(/Задания|Tasks/, (ctx) => {
-  const user = users[ctx.from.id];
-  if (!user) return;
-  user.mode = "tasks";
+bot.hears("🧪 Задания", (ctx) => {
+  const u = getUser(ctx.from.id);
+  u.mode = "tasks";
+  u.taskLevel = null;
+  u.taskLang = null;
   saveUsers();
-  ctx.reply(
-    user.lang === "ru"
-      ? "🧪 Выбери сложность задания:"
-      : "🧪 Choose task difficulty:",
-    tasksMenu(user.lang),
-  );
+  ctx.reply("Выбери сложность:", tasksMenu());
+});
+
+bot.hears("😈 Разнос кода", (ctx) => {
+  const u = getUser(ctx.from.id);
+  if (u.roastCredits <= 0) {
+    return ctx.reply("❌ Нет доступов. Купи в магазине: 🛒 Магазин");
+  }
+  u.mode = "roast";
+  saveUsers();
+  ctx.reply("Кидай код, сейчас разнесу 😈");
 });
 
 // ====== ВЫБОР СЛОЖНОСТИ ======
-bot.hears(/Легко|Easy/, (ctx) => sendTask(ctx, "easy"));
-bot.hears(/Средне|Medium/, (ctx) => sendTask(ctx, "medium"));
-bot.hears(/Сложно|Hard/, (ctx) => sendTask(ctx, "hard"));
+bot.hears(/Легко|Средне|Сложно/, (ctx) => {
+  const u = getUser(ctx.from.id);
+  if (u.mode !== "tasks") return;
 
-async function sendTask(ctx, level) {
-  const user = users[ctx.from.id];
-  if (!user) return;
-  const systemPrompt = PROMPTS[user.lang].tasks[level];
+  let level =
+    ctx.message.text.includes("Легко") ? "easy" :
+    ctx.message.text.includes("Средне") ? "medium" : "hard";
 
-  await ctx.reply(randomThinking(user.lang));
+  u.taskLevel = level;
+  saveUsers();
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: "mistralai/mistral-7b-instruct",
-      messages: [{ role: "system", content: systemPrompt }],
-      temperature: 0.9,
-      max_tokens: 2000,
-    });
-
-    const answer = response.choices[0].message.content;
-    const parts = splitText(answer);
-    for (const p of parts) await sendFormatted(ctx, p);
-  } catch (err) {
-    console.error(err);
-    await ctx.reply(
-      user.lang === "ru"
-        ? "Ошибка при генерации задания 😢"
-        : "Error while generating task 😢",
-    );
-  }
-}
-
-// ====== ТЕКСТ → LLM ======
-bot.on("text", async (ctx) => {
-  const user = users[ctx.from.id];
-  if (!user) return ctx.reply("Нажми /start");
-
-  const blocked = [
-    "Дебаг",
-    "Debug",
-    "Учитель",
-    "Teacher",
-    "Философ",
-    "Philosophy",
-    "Задания",
-    "Tasks",
-    "Сменить язык",
-    "Change language",
-    "Легко",
-    "Easy",
-    "Средне",
-    "Medium",
-    "Сложно",
-    "Hard",
-    "⬅️ Назад",
-    "⬅️ Back",
-  ];
-  if (blocked.includes(ctx.message.text)) return;
-
-  if (user.mode === "tasks") {
-    return ctx.reply(
-      user.lang === "ru"
-        ? "Выбери сложность кнопками ниже 👇"
-        : "Choose difficulty using the buttons below 👇",
-    );
-  }
-
-  await handleLLM(ctx, user, ctx.message.text);
+  ctx.reply("Теперь выбери язык программирования:", langsMenu());
 });
 
-// ====== ОСНОВНАЯ ЛОГИКА ======
-async function handleLLM(ctx, user, userText) {
-  let systemPrompt = PROMPTS[user.lang][user.mode] || PROMPTS[user.lang].debug;
+// ====== ВЫБОР ЯЗЫКА ======
+bot.hears(/^(JS|Python|Java|C\+\+|C#|C)$/, async (ctx) => {
+  const u = getUser(ctx.from.id);
+  if (u.mode !== "tasks" || !u.taskLevel) return;
 
-  await ctx.reply(randomThinking(user.lang));
+  const lang = ctx.message.text;
+  const level = u.taskLevel;
 
-  user.history.push({ role: "user", content: userText });
-  if (user.history.length > 10) user.history = user.history.slice(-10);
+  if (level === "hard") {
+    if (u.hardCredits <= 0) {
+      return ctx.reply("❌ Нет доступов к Hard. Купи в магазине 🛒");
+    }
+    u.hardCredits--;
+  }
 
-  let maxTokens = user.mode === "philosopher" ? 120 : 2000;
+  await ctx.reply(randomThinking());
+
+  const promptTemplate = PROMPTS.tasks[level];
+  const systemPrompt = promptTemplate.replace("{lang}", lang);
 
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-
-      messages: [{ role: "system", content: systemPrompt }, ...user.history],
-      temperature: 0.9,
-      max_tokens: maxTokens,
+      messages: [{ role: "system", content: systemPrompt }],
+      max_tokens: 800,
     });
 
-    const answer = response.choices[0].message.content;
-    user.history.push({ role: "assistant", content: answer });
-    if (user.history.length > 10) user.history = user.history.slice(-10);
-    saveUsers();
-
-    const parts = splitText(answer);
-    for (const p of parts) await sendFormatted(ctx, p);
-  } catch (err) {
-    console.error(err);
-    await ctx.reply(
-      user.lang === "ru"
-        ? "Ошибка при обращении к ИИ 😢"
-        : "Error while contacting AI 😢",
-    );
+    ctx.reply(response.choices[0].message.content);
+  } catch (e) {
+    console.error(e);
+    ctx.reply("Ошибка при генерации задания 😢");
   }
-}
+
+  saveUsers();
+});
+
+// ====== ОСНОВНОЙ ЧАТ ======
+bot.on("text", async (ctx) => {
+  const u = getUser(ctx.from.id);
+
+  const isSub = u.subUntil > Date.now();
+  const limit = isSub ? SUB_DAILY_LIMIT : FREE_DAILY_LIMIT;
+
+  if (u.dailyCount >= limit) {
+    return ctx.reply("⛔ Лимит на сегодня исчерпан. Купи подписку в 🛒 Магазин");
+  }
+
+  u.dailyCount++;
+
+  if (u.mode === "roast") {
+    if (u.roastCredits <= 0) {
+      return ctx.reply("❌ Закончились доступы. Купи ещё в магазине 🛒");
+    }
+    u.roastCredits--;
+  }
+
+  await ctx.reply(randomThinking());
+
+  const systemPrompt = PROMPTS[u.mode] || PROMPTS.debug;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: ctx.message.text },
+      ],
+      max_tokens: u.mode === "philosopher" ? 120 : 800,
+    });
+
+    ctx.reply(response.choices[0].message.content);
+  } catch (e) {
+    console.error(e);
+    ctx.reply("Ошибка при обращении к ИИ 😢");
+  }
+
+  saveUsers();
+});
+
+// ====== НАЗАД ======
+bot.hears("⬅️ Назад", (ctx) => {
+  ctx.reply("Главное меню:", mainMenu());
+});
 
 // ====== ЗАПУСК ======
 bot.launch();
