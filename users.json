@@ -1,12 +1,14 @@
 {
   "815695696": {
-    "lang": "ru",
-    "mode": "roast",
+    "lang": "en",
+    "mode": "tasks",
     "history": [],
-    "dailyCount": 3,
+    "dailyCount": 1,
     "lastDay": "Sat Feb 14 2026",
     "subUntil": 0,
-    "roastCredits": 14,
-    "hardCredits": 0
+    "roastCredits": 0,
+    "hardCredits": 0,
+    "taskLevel": "easy",
+    "taskLang": "JavaScript"
   }
 }

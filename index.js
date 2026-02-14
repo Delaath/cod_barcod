@@ -587,3 +587,14 @@ bot.launch();
 console.log("Бот запущен 🚀");
 process.on("SIGINT", () => bot.stop("SIGINT"));
 process.on("SIGTERM", () => bot.stop("SIGTERM"));
+
+const http = require("http");
+
+const PORT = process.env.PORT || 3000;
+
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Bot is running");
+}).listen(PORT, () => {
+  console.log("HTTP server running on port", PORT);
+});
